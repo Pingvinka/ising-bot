@@ -203,9 +203,10 @@ def load_model(model_path, n_spins):
                 print(f"Error loading model: {e}")
                 return None
                 
-        # Ваш остальной код загрузки модели
-        agent = Agent(n_spins)
+        # ИСПРАВЛЕНИЕ: используем правильный класс AdvancedGNN
+        agent = AdvancedGNN(n_spins)
         agent.load_state_dict(checkpoint['agent'])
+        agent.eval()  # Переводим в режим оценки
         return agent
         
     except Exception as e:
