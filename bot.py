@@ -186,26 +186,60 @@ def predict_spins_deterministic(agent, adj_matrix, n_restarts=10):
 
 # Функция для загрузки модели
 def load_model(model_path, n_spins):
-    
-    # Пробуем загрузить с разными параметрами
     try:
-        checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
-    except:
-        # Если не работает, пробуем альтернативный способ
-        try:
-            checkpoint = torch.load(model_path, map_location='cpu')
-        except Exception as e:
-            print(f"Error loading model: {e}")
+        # Проверяем существование файла
+        if not os.path.exists(model_path):
+            print(f"❌ Model file {model_path} not found!")
             return None
             
-    # ИСПРАВЛЕНИЕ: используем правильный класс AdvancedGNN
-    agent = AdvancedGNN(n_spins)
-    agent.load_state_dict(checkpoint['agent'])
-    agent.eval()  # Переводим в режим оценки
-    if agent == None:
-        await update.message.reply_text(f"❌ Ошибка при загрузке агента")
-    return agent
-
+        print(f"✅ Model file found: {model_path}")
+        
+        # Пробуем загрузить с разными параметрами
+        try:
+            checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
+            print("✅ Model loaded with weights_only=False")
+        except Exception as e1:
+            print(f"⚠️ First load attempt failed: {e1}")
+            # Если не работает, пробуем альтернативный способ
+            try:
+                checkpoint = torch.load(model_path, map_location='cpu')
+                print("✅ Model loaded with default parameters")
+            except Exception as e2:
+                print(f"❌ Error loading model: {e2}")
+                return None
+        
+        # Создаем агента и загружаем веса
+        agent = AdvancedGNN(n_spins)
+        
+        # Проверяем структуру checkpoint
+        print(f"📁 Checkpoint keys: {list(checkpoint.keys())}")
+        
+        # Загружаем веса (пробуем разные возможные ключи)
+        if 'agent' in checkpoint:
+            agent.load_state_dict(checkpoint['agent'])
+            print("✅ Model weights loaded from 'agent' key")
+        elif 'model_state_dict' in checkpoint:
+            agent.load_state_dict(checkpoint['model_state_dict'])
+            print("✅ Model weights loaded from 'model_state_dict' key")
+        elif 'state_dict' in checkpoint:
+            agent.load_state_dict(checkpoint['state_dict'])
+            print("✅ Model weights loaded from 'state_dict' key")
+        else:
+            # Если нет стандартных ключей, пробуем загрузить весь checkpoint как state_dict
+            try:
+                agent.load_state_dict(checkpoint)
+                print("✅ Model weights loaded directly from checkpoint")
+            except:
+                print("❌ Could not find valid model weights in checkpoint")
+                return None
+        
+        agent.eval()  # Переводим в режим оценки
+        print("✅ Model loaded successfully and set to eval mode")
+        return agent
+        
+    except Exception as e:
+        print(f"❌ Failed to load model: {e}")
+        return None
         
 # Функция для чтения матрицы из файла
 def read_matrix_from_file(file_content):
@@ -326,8 +360,17 @@ async def main_async():
     MODEL_PATH = "models/best_ising_model_ppg.pth"
     N_SPINS = 200
 
+    print("🔄 Loading model...")
     agent = load_model(MODEL_PATH, N_SPINS)
+    
+    # ВАЖНО: проверяем, что модель загрузилась
+    if agent is None:
+        print("❌ Не удалось загрузить модель! Бот не может работать.")
+        # Можно отправить сообщение в лог или завершить работу
+        return
 
+    print("✅ Model loaded successfully!")
+    
     # Создание приложения бота
     application = Application.builder().token(TOKEN).build()
 
@@ -342,8 +385,12 @@ async def main_async():
     application.add_handler(CommandHandler("tea", tea_command))
     application.add_handler(MessageHandler(filters.Document.TXT, handle_file))
 
-    # Запуск! :)
-    print("Бот запущен!")
-    await application.run_polling()
-
-asyncio.run(main_async())
+    # Запуск с обработкой ошибок
+    print("🤖 Бот запущен!")
+    try:
+        await application.run_polling(
+            drop_pending_updates=True,
+            allowed_updates=Update.ALL_TYPES
+        )
+    except Exception as e:
+        print(f"❌ Bot stopped with error: {e}")
