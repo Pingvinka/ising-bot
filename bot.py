@@ -9,9 +9,18 @@ import io
 import hashlib
 import nest_asyncio
 import os
+import sys
 
 # для работы в Jupyter/Colab
 nest_asyncio.apply()
+
+# Настройка логирования
+import logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
 def set_seeds(seed=42): #Сиды
     np.random.seed(seed)
@@ -184,64 +193,67 @@ def predict_spins_deterministic(agent, adj_matrix, n_restarts=10):
     print(best_energy)
     return best_spins
 
-# Функция для загрузки модели
 def load_model(model_path, n_spins):
     try:
+        logger.info(f"🔄 Attempting to load model from: {model_path}")
+        
         # Проверяем существование файла
         if not os.path.exists(model_path):
-            print(f"❌ Model file {model_path} not found!")
+            logger.error(f"❌ Model file not found: {model_path}")
+            logger.info(f"📁 Current directory: {os.getcwd()}")
+            logger.info(f"📁 Directory contents: {os.listdir('.')}")
+            if os.path.exists('models'):
+                logger.info(f"📁 Models directory contents: {os.listdir('models')}")
             return None
             
-        print(f"✅ Model file found: {model_path}")
+        logger.info("✅ Model file exists")
         
-        # Пробуем загрузить с разными параметрами
+        # Пробуем загрузить модель
         try:
             checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
-            print("✅ Model loaded with weights_only=False")
+            logger.info("✅ Model loaded with weights_only=False")
         except Exception as e1:
-            print(f"⚠️ First load attempt failed: {e1}")
-            # Если не работает, пробуем альтернативный способ
+            logger.warning(f"⚠️ First load attempt failed: {e1}")
             try:
                 checkpoint = torch.load(model_path, map_location='cpu')
-                print("✅ Model loaded with default parameters")
+                logger.info("✅ Model loaded with default parameters")
             except Exception as e2:
-                print(f"❌ Error loading model: {e2}")
+                logger.error(f"❌ Error loading model: {e2}")
                 return None
         
-        # Создаем агента и загружаем веса
+        # Создаем агента
         agent = AdvancedGNN(n_spins)
+        logger.info("✅ AdvancedGNN model created")
         
         # Проверяем структуру checkpoint
-        print(f"📁 Checkpoint keys: {list(checkpoint.keys())}")
+        logger.info(f"📁 Checkpoint keys: {list(checkpoint.keys())}")
         
-        # Загружаем веса (пробуем разные возможные ключи)
+        # Загружаем веса
         if 'agent' in checkpoint:
             agent.load_state_dict(checkpoint['agent'])
-            print("✅ Model weights loaded from 'agent' key")
+            logger.info("✅ Model weights loaded from 'agent' key")
         elif 'model_state_dict' in checkpoint:
             agent.load_state_dict(checkpoint['model_state_dict'])
-            print("✅ Model weights loaded from 'model_state_dict' key")
+            logger.info("✅ Model weights loaded from 'model_state_dict' key")
         elif 'state_dict' in checkpoint:
             agent.load_state_dict(checkpoint['state_dict'])
-            print("✅ Model weights loaded from 'state_dict' key")
+            logger.info("✅ Model weights loaded from 'state_dict' key")
         else:
-            # Если нет стандартных ключей, пробуем загрузить весь checkpoint как state_dict
             try:
                 agent.load_state_dict(checkpoint)
-                print("✅ Model weights loaded directly from checkpoint")
-            except:
-                print("❌ Could not find valid model weights in checkpoint")
+                logger.info("✅ Model weights loaded directly from checkpoint")
+            except Exception as e:
+                logger.error(f"❌ Could not load model weights: {e}")
                 return None
         
-        agent.eval()  # Переводим в режим оценки
-        print("✅ Model loaded successfully and set to eval mode")
+        agent.eval()
+        logger.info("✅ Model set to eval mode")
         return agent
         
     except Exception as e:
-        print(f"❌ Failed to load model: {e}")
+        logger.error(f"❌ Failed to load model: {e}")
         return None
-        
-# Функция для чтения матрицы из файла
+
 def read_matrix_from_file(file_content):
     lines = file_content.decode('utf-8').strip().split('\n')
     matrix = []
@@ -250,7 +262,6 @@ def read_matrix_from_file(file_content):
         matrix.append(row)
     return np.array(matrix)
 
-# Функция для сохранения спинов в файл
 def save_spins_to_file(spins):
     output = io.StringIO()
     for spin in spins:
@@ -270,6 +281,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
+        # Проверяем, что модель загружена
+        if 'agent' not in context.bot_data or context.bot_data['agent'] is None:
+            await update.message.reply_text("❌ Модель не загружена. Бот не может обрабатывать файлы.")
+            return
+            
         file = await update.message.document.get_file()
         file_content = await file.download_as_bytearray()
 
@@ -310,6 +326,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_document(document=result_file)
 
     except Exception as e:
+        logger.error(f"Error handling file: {e}")
         await update.message.reply_text(f"❌ Ошибка при обработке файла: {str(e)}")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -356,41 +373,64 @@ async def tea_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Чайник закипел с ошибкой: {str(e)}")
 
 async def main_async():
-    TOKEN = "8481020311:AAFtFAzgahTdfX3kB3uA1ySefGFtn6_VjYk"  
-    MODEL_PATH = "models/best_ising_model_ppg.pth"
-    N_SPINS = 200
-
-    print("🔄 Loading model...")
-    agent = load_model(MODEL_PATH, N_SPINS)
-    
-    # ВАЖНО: проверяем, что модель загрузилась
-    if agent is None:
-        print("❌ Не удалось загрузить модель! Бот не может работать.")
-        # Можно отправить сообщение в лог или завершить работу
-        return
-
-    print("✅ Model loaded successfully!")
-    
-    # Создание приложения бота
-    application = Application.builder().token(TOKEN).build()
-
-    # Сохраняем модель в данных бота
-    application.bot_data['agent'] = agent
-    application.bot_data['n_spins'] = N_SPINS
-
-    # Добавляем обработчики
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("clear_cache", clear_cache))
-    application.add_handler(CommandHandler("tea", tea_command))
-    application.add_handler(MessageHandler(filters.Document.TXT, handle_file))
-
-    # Запуск с обработкой ошибок
-    print("🤖 Бот запущен!")
     try:
+        logger.info("🚀 Starting bot initialization...")
+        
+        TOKEN = "8481020311:AAFtFAzgahTdfX3kB3uA1ySefGFtn6_VjYk"  
+        MODEL_PATH = "models/best_ising_model_ppg.pth"
+        N_SPINS = 200
+
+        logger.info(f"🔧 Configuration: TOKEN={TOKEN[:10]}..., MODEL_PATH={MODEL_PATH}, N_SPINS={N_SPINS}")
+
+        # Проверяем файловую систему
+        logger.info(f"📁 Current working directory: {os.getcwd()}")
+        logger.info(f"📁 Directory contents: {os.listdir('.')}")
+        
+        if os.path.exists('models'):
+            logger.info(f"📁 Models directory contents: {os.listdir('models')}")
+        else:
+            logger.warning("⚠️ Models directory does not exist!")
+
+        logger.info("🔄 Loading model...")
+        agent = load_model(MODEL_PATH, N_SPINS)
+        
+        if agent is None:
+            logger.error("❌ Failed to load model. Bot cannot start.")
+            return
+
+        logger.info("✅ Model loaded successfully!")
+        
+        logger.info("🔧 Creating bot application...")
+        application = Application.builder().token(TOKEN).build()
+
+        application.bot_data['agent'] = agent
+        application.bot_data['n_spins'] = N_SPINS
+
+        # Добавляем обработчики
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("help", help_command))
+        application.add_handler(CommandHandler("clear_cache", clear_cache))
+        application.add_handler(CommandHandler("tea", tea_command))
+        application.add_handler(MessageHandler(filters.Document.TXT, handle_file))
+
+        logger.info("🤖 Starting bot polling...")
         await application.run_polling(
             drop_pending_updates=True,
-            allowed_updates=Update.ALL_TYPES
+            allowed_updates=Update.ALL_TYPES,
+            timeout=30
         )
+        
     except Exception as e:
-        print(f"❌ Bot stopped with error: {e}")
+        logger.error(f"💥 Critical error in main_async: {e}")
+        raise
+
+if __name__ == "__main__":
+    logger.info("🎯 Script started")
+    try:
+        asyncio.run(main_async())
+    except KeyboardInterrupt:
+        logger.info("⏹️ Bot stopped by user")
+    except Exception as e:
+        logger.error(f"💥 Fatal error: {e}")
+    finally:
+        logger.info("🏁 Script finished")
