@@ -186,12 +186,32 @@ def predict_spins_deterministic(agent, adj_matrix, n_restarts=10):
 
 # Функция для загрузки модели
 def load_model(model_path, n_spins):
-    agent = AdvancedGNN(n_spins, hidden=256)
-    checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
-    agent.load_state_dict(checkpoint['model_state_dict'])
-    agent.eval()
-    return agent
-
+    try:
+        # Проверяем существование файла
+        if not os.path.exists(model_path):
+            print(f"Model file {model_path} not found!")
+            return None
+            
+        # Пробуем загрузить с разными параметрами
+        try:
+            checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
+        except:
+            # Если не работает, пробуем альтернативный способ
+            try:
+                checkpoint = torch.load(model_path, map_location='cpu')
+            except Exception as e:
+                print(f"Error loading model: {e}")
+                return None
+                
+        # Ваш остальной код загрузки модели
+        agent = Agent(n_spins)
+        agent.load_state_dict(checkpoint['agent'])
+        return agent
+        
+    except Exception as e:
+        print(f"Failed to load model: {e}")
+        return None
+        
 # Функция для чтения матрицы из файла
 def read_matrix_from_file(file_content):
     lines = file_content.decode('utf-8').strip().split('\n')
